@@ -1,48 +1,41 @@
 package com.company;
 
-import javax.management.InvalidAttributeValueException;
 import java.text.MessageFormat;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
+import java.util.*;
 
 class SuperIterator implements Iterator<Integer> {
-    private static final class InternalIterator implements Iterator<Integer> {
-        private final Iterator<Integer> iterator;
-        private Integer lastValue;
-        private boolean hasValue;
-
-        public InternalIterator(Iterator<Integer> iterator) {
-            this.iterator = iterator;
-        }
-
-        public boolean hasValue() { return hasValue; }
-        public Integer getLastValue() throws InvalidAttributeValueException {
-            if (hasValue) {
-                return lastValue;
-            }
-            throw new InvalidAttributeValueException();
-        }
-        public Integer next() throws NoSuchElementException {
-            lastValue = iterator.next();
-            hasValue = true;
-            return lastValue;
-        }
-        public boolean hasNext() {
-            return iterator.hasNext();
-        }
-    }
-
-    private final List<InternalIterator> pool = new ArrayList<>();
+    private final List<Iterator<Integer>> pool = new ArrayList<>();
+    private TreeMap<Integer, Queue<Iterator<Integer>>> iteratorMap = null;
 
     public SuperIterator(Iterable<Iterator<Integer>> iterators) {
-        iterators.forEach(iter -> this.pool.add(new InternalIterator(iter)));
+        iterators.forEach(this.pool::add);
+    }
+
+    private void initializeMap() {
+        iteratorMap = new TreeMap<>();
+        pool.forEach(iter -> {
+            if (iter.hasNext()) {
+                addIteratorToMap(iter);
+            }
+        });
+    }
+
+    private void addIteratorToMap(Iterator<Integer> iter) {
+        var val = iter.next();
+        Queue<Iterator<Integer>> result = new ArrayDeque<>();
+        if (!iteratorMap.containsKey(val)) {
+            iteratorMap.put(val, result);
+        }
+        var ret = iteratorMap.get(val);
+        ret.add(iter);
     }
 
     @Override
     public boolean hasNext() {
-        return !pool.isEmpty();
+        if (iteratorMap == null) {
+            initializeMap();
+        }
+        return iteratorMap != null && iteratorMap.size() != 0;
     }
 
     @Override
@@ -50,45 +43,38 @@ class SuperIterator implements Iterator<Integer> {
         if (!hasNext()) {
             throw new NoSuchElementException();
         }
-        for (var iter: pool) {
-            if (!iter.hasValue()) {
-                iter.next();
-            }
+        var entry = iteratorMap.firstEntry();
+        var iter = getIteratorFromMap(entry);
+        if (iter == null) {
+            throw new NoSuchElementException();
         }
-        pool.sort((val1, val2) -> {
-            try {
-                return val1.getLastValue().compareTo(val2.getLastValue());
-            } catch (InvalidAttributeValueException e) {
-                throw new NoSuchElementException(e.toString());
-            }
-        });
-        var it = pool.iterator();
-        if (!it.hasNext())
-        {
-            throw new NoSuchElementException("iterators are over");
+        if (iter.hasNext()) {
+            addIteratorToMap(iter);
         }
-        var minimal = it.next();
-        try {
-            var val = minimal.getLastValue();
-            pool.removeIf(iter -> !iter.hasNext());
-            if (minimal.hasNext()) {
-                minimal.next();
-            }
-            return val;
-        } catch (InvalidAttributeValueException e) {
-            throw new NoSuchElementException(e.toString());
+        return entry.getKey();
+    }
+
+    private Iterator<Integer> getIteratorFromMap(Map.Entry<Integer, Queue<Iterator<Integer>>> entry) {
+        var queue = entry.getValue();
+        var iter = queue.poll();
+        if (queue.isEmpty()) {
+            iteratorMap.pollFirstEntry();
         }
+        return iter;
     }
 }
 
 public class Main {
     public static void main(String[] args) {
         var first = List.of(1, 5, 7, 23, 33, 35, 45, 66, 345, 634).iterator();
-        var second = List.of(3, 4, 9, 12, 12, 15, 33, 35, 634, 654, 788).iterator();
-        var expected = List.of(1, 3, 4, 5, 7, 9, 12, 12, 15, 23, 33, 33, 35, 35, 45, 66, 345, 634, 634, 654).iterator();
+        var second = List.of(1, 3, 4, 9, 12, 12, 15, 33, 35, 634, 654, 788).iterator();
+        var expected = List.of(1, 1, 3, 4, 5, 7, 9, 12, 12, 15, 23, 33, 33, 35, 35, 45, 66, 345, 634, 634, 654).iterator();
 //        var first = List.of(1).iterator();
 //        var second = List.of(3, 4, 5, 7).iterator();
 //        var expected = List.of(1, 3, 4, 5, 7).iterator();
+//        var first = List.of(1).iterator();
+//        var second = List.of(2).iterator();
+//        var expected = List.of(1, 2).iterator();
         var sup = new SuperIterator(List.of(first, second));
         while (expected.hasNext() && sup.hasNext()) {
             int expVal = expected.next();
